@@ -59,10 +59,12 @@ def Spectrum(x, sampling_space: int=1, type: str='magnitude'):
 
 def power(signal):
     """
-    return the power of the signal (arr) without normalization (i.e. 1/n is not performed.)
-    this function can be used to compare the power of a signal both in time and frequency domains (see Parseval's Theorem.)
+    Return the power of the signal (arr) without normalization (i.e. 1/n is not performed).
+    This function can be used to compare the power of a signal both in time and frequency domains (see Parseval's Theorem).
     """
-    return np.sum(np.abs(signal) ** 2)
+    # signals are typically given in np.int16 datatype, but their square values do not usually fit into this same datatype. 
+    # so, we have to adjust the datatype of the input signal arrays into np.int32 to avoid any possible overflows and unexpected values for the signal power. 
+    return np.sum(np.abs(signal.astype(np.int32)) ** 2)
 
 def unpackbits(sample_array):
     "unpack a numpy array of samples into a stram of bits (str) according to the datatype/precision of the array elements"

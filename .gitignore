@@ -8,5 +8,11 @@ stage_1/audio_files/*.wav
 # but not certain audio files
 !stage_1/audio_files/vignesh.wav
 
+# log files
+logs
+
 # everything inside the log
 /logs/
+
+# debugging configurations
+.vscode/

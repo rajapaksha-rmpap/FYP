@@ -149,3 +149,12 @@ def mean_Lp_dist(sig1, sig2, p: int):
     :param sig2: a numpy array representing the second signal 
     """
     return (np.sum(np.abs(sig1 - sig2)**p) / len(sig1))**(1/p)
+
+def SNR(X, Y):
+    """
+    Estimates the SNR in dB of a filter output signal Y, taking X as the SoI; SNR = 10 log (power(Y-X) / power(X))
+    :param X: SoI (Signal of Interest)
+    :param Y: filter output (SoI + noise)
+    """
+
+    return 10 * np.log10(power(X)/power(Y-X))

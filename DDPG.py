@@ -17,7 +17,7 @@ class ReplayBuffer:
         self.action_memory    = np.zeros((self.mem_size, n_actions))
         self.reward_memory    = np.zeros(self.mem_size)
         self.new_state_memory = np.zeros((self.mem_size, *state_shape))
-        self.terminal_memory  = np.zeros(self.mem_size, dtype=np.bool) # using np.bool is really useful when pytorch is used.
+        self.terminal_memory  = np.zeros(self.mem_size, dtype=np.bool_) # using np.bool is really useful when pytorch is used.
 
     def store_transition(self, state, action, reward, new_state, done):
         index = self.mem_cntr % self.mem_size # implement a queue
@@ -58,7 +58,7 @@ class CriticNetwork(keras.Model):
 
         self.model_name = name # do not use 'self.model'; it is a reserved variable name in tf
         self.checkpoint_dir  = chkpt_dir
-        self.checkpoint_file = os.path.join(self.checkpoint_dir, self.model_name, '_ddpg.h5') 
+        self.checkpoint_file = os.path.join(self.checkpoint_dir, self.model_name+'_ddpg.h5') 
         # extensions for saving keras models: legacy '.h5' -> TF 1.X, '.tf' -> TF 2.X
 
         self.fc1_dims = fc1_dims
@@ -70,7 +70,8 @@ class CriticNetwork(keras.Model):
         self.q   = Dense(1, activation=None)
 
     def call(self, state, action):
-        temp1 = self.fc1(tf.concat([state, action], axis=1)) # axis 0 -> batch dimension
+        # temp1 = self.fc1(tf.concat([state, action], axis=1)) # axis 0 -> batch dimension
+        temp1 = self.fc1(action)
         # ######################## PROBLEM ########################
         # according to the paper, actions were not included until the 2nd hidden layer of Q
         temp2 = self.fc2(temp1)
@@ -92,7 +93,7 @@ class ActorNetwork(keras.Model):
 
         self.model_name = name # do not use 'self.model'; it is a reserved variable name in tf
         self.checkpoint_dir  = chkpt_dir
-        self.checkpoint_file = os.path.join(self.checkpoint_dir, self.model_name, '_ddpg.h5') 
+        self.checkpoint_file = os.path.join(self.checkpoint_dir, self.model_name+'_ddpg.h5') 
 
         self.n_actions = n_actions
         self.fc1_dims = fc1_dims
@@ -113,12 +114,12 @@ class ActorNetwork(keras.Model):
 
 
 # ================================== DDPG AGENT =================================
-class Agent:
+class DDPGAgent:
     def __init__(
             self,
             input_dims, # state shape
             n_actions,  # dimensionality of actions
-            env,        # gymnasium env
+            # env,        # gymnasium env
             alpha,      # learning rate of actor
             beta,       # learning rate of critic
             gamma,      # discounting factor
@@ -128,16 +129,18 @@ class Agent:
             actor_fc1,
             actor_fc2,
             batch_size,
+            buffer_size,
             noise
     ):
         # set the class attributes
         self.tau = tau
+        self.n_actions = n_actions
         self.noise = noise
         self.batch_size = batch_size
         self.gamma = gamma
 
         # instantiate replay buffer
-        self.memory = ReplayBuffer(batch_size, state_shape=input_dims, n_actions=n_actions)
+        self.memory = ReplayBuffer(buffer_size, state_shape=input_dims, n_actions=n_actions)
 
         # instantiate the networks
         self.actor  = ActorNetwork("actor", n_actions, actor_fc1, actor_fc2)
@@ -219,8 +222,8 @@ class Agent:
             targets = rewards + self.gamma * next_step_critic_values * (1-done) # y_i
             critic_loss = MSE(targets, critic_values)
         
-        critic_network_gradients = tape.gradient(critic_loss, self.critic.trainable_variabels)
-        self.critic.optimizer.apply_gradients(zip(critic_network_gradients, self.critic.trainable_variabels))
+        critic_network_gradients = tape.gradient(critic_loss, self.critic.trainable_variables)
+        self.critic.optimizer.apply_gradients(zip(critic_network_gradients, self.critic.trainable_variables))
 
         # update the actor
         with tf.GradientTape() as tape:

@@ -2,7 +2,7 @@ import os, sys
 import time
 import numpy as np
 from scipy.io import wavfile
-from scipy.fft import fft, rfft, fftshift, fftfreq
+from scipy.fft import fft, rfft, irfft, fftshift, fftfreq
 from scipy.signal import convolve, freqz
 import matplotlib.pyplot as plt
 
@@ -87,6 +87,88 @@ def biterrorcount(target_bit_stream, received_bit_stream):
     "calculates the bit error count of the received bit stream compared to the target bit stream"
     return np.count_nonzero(np.bitwise_xor(target_bit_stream, received_bit_stream))
 
+def create_target_and_jammed_signals(audio_name, truncation_freq, interference_center_freq, audio_file_dir='audio_files/', save_files=False):
+    """
+    Creates the target and jammed signals with the specified truncation frequnecy and the interference center frequency.
+    :param audio_name: name of the audio .wav file (without the .wav extension)
+    :param truncation_freq: the frequency to truncate the audio spectrum to generate the target signal
+    :param interference_center_freq: the frequency to shift the target spectrum to generate the non-overlapping interference \n(`truncation_freq` and `interference_center_freq`) \
+        must be chosen appropriately to create non-overlapping interferences; otherwise, errors will be raised.
+    :param audio_file_dir: the path to the directory containing the audio file
+    :param save_files: boolean value indicating whether to write the resulting (MONO), truncated, and jammed signals
+    """
+
+    SAMPLING_FREQ = 44_100 # each audio file must have a constant sampling freq to equally apply the truncation and interference center frequencies
+    INTERFRERENCE_SCALAR = 1   # the scaling factor of the interference signal
+    print(f"audio name: '{audio_name}'")
+
+    # ------------------------------------------ read the input audio ------------------------------------------
+    audio_src_file = os.path.join(audio_file_dir, audio_name+'.wav')
+    if not os.path.exists(audio_src_file):
+        raise Exception(f"the specified audio file doesn't exist: given {audio_src_file}")
+    sampling_rate, audio = wavfile.read(audio_src_file)
+    sampling_space = 1/sampling_rate
+    print(f"sampling rate    : {sampling_rate} Hz")
+
+    if (sampling_rate != SAMPLING_FREQ):
+        raise Exception(f"Error - the sampling rate must be equal to {SAMPLING_FREQ}Hz: given {sampling_rate}")
+    if (interference_center_freq < 2 * truncation_freq):
+        raise Exception(f"Error - non-overlapping interferene is impossible with the provided truncation and interference center frequencies: given {truncation_freq} and {interference_center_freq}")
+    if (interference_center_freq + truncation_freq > sampling_rate):
+        raise Exception(f"Error - interference signal surpasses the sampling freqency of the original audio.")
+
+    # ----------------------------------------- coverting to MONO audio ----------------------------------------
+    print(f"audio shape: {audio.shape}")
+    print(f"data type: {audio.dtype}")
+    
+    if len(audio.shape) == 1: # MONO
+        print("MONO audio file...")
+        
+    elif len(audio.shape) == 2 and audio.shape[-1] == 2: # STEREO
+        print("converting audio from STEREO to MONO...")
+        audio = np.average(audio, axis=-1).astype(audio.dtype)
+        print(f"\taudio shape: {audio.shape}")
+        print(f"\tdata type  : {audio.dtype}")
+
+        # if save_files:
+        # saving the MONO audio file
+        mono_dst_file = os.path.join(audio_file_dir, audio_name+'-MONO.wav')
+        print(f"\tsaving MONO audio: '{mono_dst_file}'...")
+        wavfile.write(mono_dst_file, rate=sampling_rate, data=audio)
+    else:
+        raise TypeError("unsupported wav file format")
+
+    # --------------------------------------- truncate the signal spectrum --------------------------------------
+    # apply the cut-off frequency to audio spectrum 
+    freq_bins, spectrum = Spectrum(audio, sampling_space=sampling_space, type='complex')
+
+    print(f"truncating the spectrum at {truncation_freq}Hz...")
+    rect_filter = (freq_bins < truncation_freq).astype(np.uint8)
+    target_spectrum = spectrum * rect_filter
+    target_signal = to_min_size_int_array(irfft(target_spectrum)) # converting to an integer format #######
+
+    if save_files:
+        # save the test signal
+        target_dst_file = os.path.join(audio_file_dir, audio_name + "-target-MONO.wav")
+        print(f"saving target signal: '{target_dst_file}'...")
+        wavfile.write(target_dst_file, rate=sampling_rate, data=target_signal)
+    
+    # ---------------------------------------- create the jammed signal -----------------------------------------
+    # creating a non-overlapping interference signal 
+    t = np.arange(len(target_signal)) * sampling_space
+    interference = (2 * target_signal * np.cos(2*np.pi*interference_center_freq*t)) # .astype(default_dtype) # converting to np.int32
+
+    # generate the jammed signal
+    jammed_signal = to_min_size_int_array(target_signal + INTERFRERENCE_SCALAR * interference) #.astype(np.int16)
+
+    if save_files:
+        # save the jammed signal
+        jammed_dst_file = os.path.join(audio_file_dir, audio_name + "-jammed-MONO.wav")
+        print(f"saving jammed signal: '{jammed_dst_file}'...")
+        wavfile.write(jammed_dst_file, rate=sampling_rate, data=jammed_signal)
+
+    return target_signal, jammed_signal
+        
 
 # ================================================ STAGE 2 ================================================
 

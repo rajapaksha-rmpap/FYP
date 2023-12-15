@@ -16,18 +16,18 @@ def to_min_size_int_array(arr):
     """
 
     if np.min(arr) >= np.iinfo(np.int8).min and np.max(arr) <= np.iinfo(np.int8).max:
-        print(f"converting from {arr.dtype} to {np.int8}; array ranges from min:  {np.min(arr)} (>={np.iinfo(np.int8).min})  to max: {np.max(arr)} (<={np.iinfo(np.int8).max})")
+        print(f"\tconverting from {arr.dtype} to {np.int8}; array ranges from min:  {np.min(arr)} (>={np.iinfo(np.int8).min})  to max: {np.max(arr)} (<={np.iinfo(np.int8).max})")
         return arr.astype(np.int8)
     if np.min(arr) >= np.iinfo(np.int16).min and np.max(arr) <= np.iinfo(np.int16).max:
-        print(f"converting from {arr.dtype} to {np.int16}; array ranges from min: {np.min(arr)} (>={np.iinfo(np.int16).min}) to max: {np.max(arr)} (<={np.iinfo(np.int16).max})")
+        print(f"\tconverting from {arr.dtype} to {np.int16}; array ranges from min: {np.min(arr)} (>={np.iinfo(np.int16).min}) to max: {np.max(arr)} (<={np.iinfo(np.int16).max})")
         return arr.astype(np.int16)
     if np.min(arr) >= np.iinfo(np.int32).min and np.max(arr) <= np.iinfo(np.int32).max:
-        print(f"converting from {arr.dtype} to {np.int32}; array ranges from min: {np.min(arr)} (>={np.iinfo(np.int32).min}) to max: {np.max(arr)} (<={np.iinfo(np.int32).max})")
+        print(f"\tconverting from {arr.dtype} to {np.int32}; array ranges from min: {np.min(arr)} (>={np.iinfo(np.int32).min}) to max: {np.max(arr)} (<={np.iinfo(np.int32).max})")
         return arr.astype(np.int32)
     
     # if np array is out of the ranges of np.int8, int16, and int32 integer data types, then raise an error
-    print(f"array ranges from min: {np.min(arr)} to max: {np.max(arr)}")
-    raise Exception(f"the array elements are too big to handle; {arr.dtype}")
+    print(f"\tarray ranges from min: {np.min(arr)} to max: {np.max(arr)}")
+    raise Exception(f"\tthe array elements are too big to handle; {arr.dtype}")
 
 def Spectrum(x, sampling_space: int=1, type: str='magnitude'):
     """
@@ -87,15 +87,46 @@ def biterrorcount(target_bit_stream, received_bit_stream):
     "calculates the bit error count of the received bit stream compared to the target bit stream"
     return np.count_nonzero(np.bitwise_xor(target_bit_stream, received_bit_stream))
 
-def create_target_and_jammed_signals(audio_name, truncation_freq, interference_center_freq, audio_file_dir='audio_files/', save_files=False):
+def trim_audio(audio, window_size, min_sample_magnitude:int = 2):
+    """
+    Trims the leading and trailing zeros from the audio signal and truncates further samples to ensure a signal partition of size 'window_size' contain a good frequency spectrum.
+    :param audio: the audio signal to trim and truncate
+    :param window_size: the size of the signal partition whose frequency spectrum is considered (use the same value as the signal partition size of the enviroment)
+    :param min_sample_magnitude: average minimum size of an audio sample in the signal
+
+    returns the trimmed audio. 
+    """
+
+    print("\ttrimming the audio signal...")
+
+    # audio = np.trim_zeros(audio)
+
+    # finding the sum over a fixed window
+    start = 0; end = -1
+    accumulated_samples_lower_bound = min_sample_magnitude * window_size
+
+    while np.sum(np.abs(audio[start : start+window_size])) <= accumulated_samples_lower_bound:
+        start += 1
+    
+    while np.sum(np.abs(audio[end-window_size : end])) <= accumulated_samples_lower_bound:
+        end -= 1
+    
+    print(f"\t\ttruncating the audio at lower {start} and upper {end} indices")
+
+    return audio[start : end]
+
+def create_target_and_jammed_signals(audio_name, truncation_freq, interference_center_freq, signal_partition_size, audio_file_dir='audio_files/', save_files=False):
     """
     Creates the target and jammed signals with the specified truncation frequnecy and the interference center frequency.
     :param audio_name: name of the audio .wav file (without the .wav extension)
     :param truncation_freq: the frequency to truncate the audio spectrum to generate the target signal
     :param interference_center_freq: the frequency to shift the target spectrum to generate the non-overlapping interference \n(`truncation_freq` and `interference_center_freq`) \
         must be chosen appropriately to create non-overlapping interferences; otherwise, errors will be raised.
+    :param signal_partition_size: the size of a signal partition considered to truncate the audio signal
     :param audio_file_dir: the path to the directory containing the audio file
     :param save_files: boolean value indicating whether to write the resulting (MONO), truncated, and jammed signals
+
+    Returns the target signal and the jammed signal
     """
 
     SAMPLING_FREQ = 44_100 # each audio file must have a constant sampling freq to equally apply the truncation and interference center frequencies
@@ -108,7 +139,7 @@ def create_target_and_jammed_signals(audio_name, truncation_freq, interference_c
         raise Exception(f"the specified audio file doesn't exist: given {audio_src_file}")
     sampling_rate, audio = wavfile.read(audio_src_file)
     sampling_space = 1/sampling_rate
-    print(f"sampling rate    : {sampling_rate} Hz")
+    print(f"sampling rate: {sampling_rate} Hz")
 
     if (sampling_rate != SAMPLING_FREQ):
         raise Exception(f"Error - the sampling rate must be equal to {SAMPLING_FREQ}Hz: given {sampling_rate}")
@@ -138,23 +169,30 @@ def create_target_and_jammed_signals(audio_name, truncation_freq, interference_c
     else:
         raise TypeError("unsupported wav file format")
 
-    # --------------------------------------- truncate the signal spectrum --------------------------------------
-    # apply the cut-off frequency to audio spectrum 
+    # --------------------------------------- creating the target signal ---------------------------------------
+    print(f"generating the target signal...")
     freq_bins, spectrum = Spectrum(audio, sampling_space=sampling_space, type='complex')
 
-    print(f"truncating the spectrum at {truncation_freq}Hz...")
+    # apply the cut-off frequency to audio spectrum 
+    print(f"\ttruncating the spectrum at {truncation_freq}Hz")
     rect_filter = (freq_bins < truncation_freq).astype(np.uint8)
     target_spectrum = spectrum * rect_filter
     target_signal = to_min_size_int_array(irfft(target_spectrum)) # converting to an integer format #######
 
+    # trim the signal (until a partition with sufficient non-zero audio samples)
+    target_signal = trim_audio(target_signal, signal_partition_size)
+
     if save_files:
-        # save the test signal
+        # save the target signal
         target_dst_file = os.path.join(audio_file_dir, audio_name + "-target-MONO.wav")
         print(f"saving target signal: '{target_dst_file}'...")
         wavfile.write(target_dst_file, rate=sampling_rate, data=target_signal)
     
     # ---------------------------------------- create the jammed signal -----------------------------------------
+    print(f"generating the jammed signal...")
+
     # creating a non-overlapping interference signal 
+    print(f"\tcreating a non-overlapping interference signal around {interference_center_freq}Hz with a bandwidth of {2*truncation_freq}Hz")
     t = np.arange(len(target_signal)) * sampling_space
     interference = (2 * target_signal * np.cos(2*np.pi*interference_center_freq*t)) # .astype(default_dtype) # converting to np.int32
 
@@ -198,6 +236,8 @@ def apply_filter(filter, signal):
 
     :param filter: an array containing the coefficients of the FIR filter
     :param signal: an array corresponding to the signal sequence 
+
+    Returns the filtered signal
     """
 
     return convolve(signal, filter, mode='same')

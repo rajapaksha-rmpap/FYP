@@ -11,6 +11,9 @@ stage_1/audio_files/*.wav
 # log files
 logs
 
+# plots
+plots
+
 # everything inside the log
 /logs/
 

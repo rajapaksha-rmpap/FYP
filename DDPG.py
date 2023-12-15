@@ -3,7 +3,9 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.initializers import RandomUniform
 from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import LayerNormalization
 from tensorflow.keras.losses import MSE
 
 
@@ -49,9 +51,9 @@ class ReplayBuffer:
 class CriticNetwork(keras.Model):
     def __init__(
             self,
-            name="critic", # model name (required by tf.keras.Model)
-            fc1_dims=512,
-            fc2_dims=512,
+            name, # model name (required by tf.keras.Model)
+            fc1_dims,
+            fc2_dims,
             chkpt_dir='tmp/ddpg/'
     ):
         super(CriticNetwork, self).__init__()
@@ -64,18 +66,76 @@ class CriticNetwork(keras.Model):
         self.fc1_dims = fc1_dims
         self.fc2_dims = fc2_dims
 
-        # define network layers 
-        self.fc1 = Dense(self.fc1_dims, activation='relu')
-        self.fc2 = Dense(self.fc2_dims, activation='relu')
-        self.q   = Dense(1, activation=None)
+        # # define network layers 
+        # self.fc1 = Dense(self.fc1_dims, activation='relu')
+        # self.fc2 = Dense(self.fc2_dims, activation='relu')
+        # self.q   = Dense(1, activation=None)
+
+        # # define network layers 
+        # self.hidden1  = Dense(self.fc1_dims, activation='relu', name="critic_hidden1")
+        # self.hidden2  = Dense(self.fc2_dims, activation='relu', name="critic_hidden2")
+        # # according to the paper, actions were not included until the 2nd hidden layer of Q
+        # self.hidden2_ = Dense(self.fc2_dims, activation='relu', name="critic_hidden2_")
+        # self.q        = Dense(1, activation=None, name="q_value") # change the activation appropriately
+
+        hidden1_initializer = RandomUniform(minval=-1/np.sqrt(self.fc1_dims), maxval=1/np.sqrt(self.fc1_dims))
+        hidden2_initializer = RandomUniform(minval=-1/np.sqrt(self.fc2_dims), maxval=1/np.sqrt(self.fc2_dims))
+        final_layer_initializer = RandomUniform(minval=-3*10**-4, maxval=3*10**-4)
+
+        # define network layers
+        self.state_normalizer   = LayerNormalization(epsilon=10**-4, center=False, scale=False)
+        self.hidden1 = Dense(
+            units=self.fc1_dims,
+            activation='relu',
+            kernel_initializer=hidden1_initializer,
+            bias_initializer=hidden1_initializer,
+            name="critic_hidden1"
+        )
+        self.hidden1_normalizer = LayerNormalization(epsilon=10**-4, center=False, scale=False)
+        self.hidden2 = Dense(
+            units=self.fc2_dims, 
+            activation='relu', 
+            kernel_initializer=hidden2_initializer,
+            bias_initializer=hidden2_initializer,
+            name="critic_hidden2"
+        )
+        self.action_normalizer  = LayerNormalization(epsilon=10**-4, center=False, scale=False)
+        self.hidden2_ = Dense(
+            units=self.fc2_dims, 
+            activation='relu', 
+            kernel_initializer=hidden2_initializer,
+            bias_initializer=hidden2_initializer,
+            name="critic_hidden2_"
+        )
+        self.hidden2_normalizer = LayerNormalization(epsilon=10**-4, center=False, scale=False)
+        leaky_relu = tf.keras.layers.LeakyReLU(alpha=0.1)
+        self.q = Dense(
+            units=1,
+            activation=None, # None
+            kernel_initializer=final_layer_initializer,
+            bias_initializer=final_layer_initializer,
+            name="q_value"
+        )
 
     def call(self, state, action):
-        # temp1 = self.fc1(tf.concat([state, action], axis=1)) # axis 0 -> batch dimension
-        temp1 = self.fc1(action)
-        # ######################## PROBLEM ########################
-        # according to the paper, actions were not included until the 2nd hidden layer of Q
-        temp2 = self.fc2(temp1)
-        q_value = self.q(temp2)
+        # # temp1 = self.fc1(tf.concat([state, action], axis=1)) # axis 0 -> batch dimension
+        # temp1 = self.fc1(action)
+        # # ######################## PROBLEM ########################
+        # # according to the paper, actions were not included until the 2nd hidden layer of Q
+        # temp2 = self.fc2(temp1)
+        # q_value = self.q(temp2)
+
+        normalized_state   = self.state_normalizer(state)
+        hidden1            = self.hidden1(normalized_state)
+        # normalized_hidden1 = self.hidden1_normalizer(hidden1)
+        # hidden2            = self.hidden2(normalized_hidden1)
+        hidden2            = self.hidden2(hidden1)
+        # normalized_action  = self.action_normalizer(action) # may not be required since action is already bounded between [-1, +1], but they may be too small compared to normalized_hidden1 activations
+        # hidden2_           = self.hidden2_(normalized_action)
+        hidden2_           = self.hidden2_(action)
+        normalized_hidden2 = self.hidden2_normalizer(tf.concat([hidden2, hidden2_], axis=1)) ######
+        q_value            = self.q(normalized_hidden2)
+        # q_value = self.q(tf.concat([hidden2, hidden2_], axis=1))
 
         return q_value
 
@@ -83,10 +143,10 @@ class CriticNetwork(keras.Model):
 class ActorNetwork(keras.Model):
     def __init__(
             self,
-            name="actor", # model name (required by tf.keras.Model)
-            n_actions=2, # action shape (dimenisonality of action space)
-            fc1_dims=512,
-            fc2_dims=512,
+            name, # model name (required by tf.keras.Model)
+            n_actions, # action shape (dimenisonality of action space)
+            fc1_dims,
+            fc2_dims,
             chkpt_dir='tmp/ddpg/'
     ):
         super(ActorNetwork, self).__init__()
@@ -99,15 +159,51 @@ class ActorNetwork(keras.Model):
         self.fc1_dims = fc1_dims
         self.fc2_dims = fc2_dims
 
-        # define network layers
-        self.fc1 = Dense(self.fc1_dims,  activation='relu')
-        self.fc2 = Dense(self.fc2_dims,  activation='relu')
-        self.mu  = Dense(self.n_actions, activation='tanh') # action is bounded by +/- 1
+        # weight and bias initialziers
+        hidden1_initializer = RandomUniform(minval=-1/np.sqrt(self.fc1_dims), maxval=1/np.sqrt(self.fc1_dims))
+        hidden2_initializer = RandomUniform(minval=-1/np.sqrt(self.fc2_dims), maxval=1/np.sqrt(self.fc2_dims))
+        final_layer_initializer = RandomUniform(minval=-3*10**-4, maxval=3*10**-4)
+        
+
+        # define network layers including layer noramlizations
+        self.state_normalizer   = LayerNormalization(epsilon=10**-4, center=False, scale=False)
+        self.hidden1 = Dense(
+            units=self.fc1_dims, 
+            activation='relu', 
+            kernel_initializer=hidden1_initializer,
+            bias_initializer=hidden1_initializer,
+            name='actor_hidden1'
+        )
+        self.hidden1_normalizer = LayerNormalization(epsilon=10**-4, center=False, scale=False)
+        self.hidden2 = Dense(
+            units=self.fc2_dims, 
+            activation='relu', 
+            kernel_initializer=hidden2_initializer,
+            bias_initializer=hidden2_initializer,
+            name='actor_hidden2'
+        )
+        self.hidden2_normalizer = LayerNormalization(epsilon=10**-4, center=False, scale=False)
+        self.mu = Dense(
+            units=n_actions,
+            activation='tanh', # limit the action in the range [-1, 1] -> 'tanh'
+            kernel_initializer=final_layer_initializer,
+            bias_initializer=final_layer_initializer,
+            name='action'
+        )
+
+        # self.hidden1 = Dense(self.fc1_dims,  activation='relu', name='actor_hidden1')
+        # self.hidden2 = Dense(self.fc2_dims,  activation='relu', name='actor_hidden2')
+        # self.mu  = Dense(self.n_actions, activation='tanh') # action is bounded by +/- 1
 
     def call(self, state):
-        temp1  = self.fc1(state)
-        temp2  = self.fc2(temp1)
-        action = self.mu(temp2)
+        normalized_state   = self.state_normalizer(state)
+        hidden1            = self.hidden1(normalized_state)
+        # normalized_hidden1 = self.hidden1_normalizer(hidden1)
+        # hidden2            = self.hidden2(normalized_hidden1)
+        hidden2            = self.hidden2(hidden1)
+        # normalized_hidden2 = self.hidden2_normalizer(hidden2)
+        # action             = self.mu(normalized_hidden2)
+        action             = self.mu(hidden2)
 
         return action
 
@@ -143,10 +239,10 @@ class DDPGAgent:
         self.memory = ReplayBuffer(buffer_size, state_shape=input_dims, n_actions=n_actions)
 
         # instantiate the networks
-        self.actor  = ActorNetwork("actor", n_actions, actor_fc1, actor_fc2)
-        self.critic = CriticNetwork("critic", critic_fc1, critic_fc2)
-        self.target_actor  = ActorNetwork("target_actor", n_actions, actor_fc1, actor_fc2)
-        self.target_critic = CriticNetwork("target_critic", critic_fc1, critic_fc2)
+        self.actor  = ActorNetwork(name="actor", n_actions=n_actions, fc1_dims=actor_fc1, fc2_dims=actor_fc2)
+        self.critic = CriticNetwork(name="critic", fc1_dims=critic_fc1, fc2_dims=critic_fc2)
+        self.target_actor  = ActorNetwork(name="target_actor", n_actions=n_actions, fc1_dims=actor_fc1, fc2_dims=actor_fc2)
+        self.target_critic = CriticNetwork(name="target_critic", fc1_dims=critic_fc1, fc2_dims=critic_fc2)
 
         # compile networks
         self.actor.compile(optimizer=Adam(learning_rate=alpha))
@@ -154,7 +250,7 @@ class DDPGAgent:
         # target networks do not require an optimizer or a learning rate since they are learned through soft updates.
         # but, to use the networks in TF2, we have to compile them with an optimizer and a learning rate. 
         self.target_actor.compile(optimizer=Adam(learning_rate=alpha))
-        self.target_critic.compile(optimizer=Adam(learning_rate=alpha))
+        self.target_critic.compile(optimizer=Adam(learning_rate=beta))
 
         # load identical weights to target networks
         self.update_target_network_parameters(tau=1)
@@ -199,7 +295,7 @@ class DDPGAgent:
             # here, the exploration noise is sampled from a normal distribution with zero mean and specified std deviation. 
             action += tf.random.normal(shape=[self.n_actions], mean=0.0, stddev=self.noise)
             # when added the noise, the action can go beyond the action space limits; so, clip the actions.
-            action = tf.clip_by_value(action, clip_value_max=1.0, clip_value_min=-1.0)
+            # action = tf.clip_by_value(action, clip_value_max=1.0, clip_value_min=-1.0)
 
         return action[0] # get rid of the batch dimension
     

@@ -5,7 +5,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 sys.path.append('../')
-from helper import apply_filter, SNR, create_target_and_jammed_signals
+from stage1_helper import apply_filter, SNR, create_target_and_jammed_signals
 
 
 class UniStateReceiverEnv(gym.Env):

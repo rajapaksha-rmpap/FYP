@@ -115,7 +115,7 @@ def trim_audio(audio, window_size, min_sample_magnitude:int = 2):
 
     return audio[start : end]
 
-def create_target_and_jammed_signals(audio_name, truncation_freq, interference_center_freq, signal_partition_size, audio_file_dir='audio_files/', save_files=False):
+def create_target_and_jammed_signals(audio_name, truncation_freq, interference_center_freq, signal_partition_size, audio_file_dir='/home/akila/FYP/coding/stage_1/audio_files/', save_files=False):
     """
     Creates the target and jammed signals with the specified truncation frequnecy and the interference center frequency.
     :param audio_name: name of the audio .wav file (without the .wav extension)
@@ -126,7 +126,7 @@ def create_target_and_jammed_signals(audio_name, truncation_freq, interference_c
     :param audio_file_dir: the path to the directory containing the audio file
     :param save_files: boolean value indicating whether to write the resulting (MONO), truncated, and jammed signals
 
-    Returns the target signal and the jammed signal
+    Returns the target signal and the jammed signal.
     """
 
     SAMPLING_FREQ = 44_100 # each audio file must have a constant sampling freq to equally apply the truncation and interference center frequencies

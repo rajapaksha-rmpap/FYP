@@ -17,7 +17,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.evaluation import evaluate_policy
 
 sys.path.append('../')
-from helper import to_min_size_int_array, Spectrum, LPF, apply_filter, mean_L1_dist, SNR, create_target_and_jammed_signals, trim_audio
+from stage1_helper import to_min_size_int_array, Spectrum, LPF, apply_filter, mean_L1_dist, SNR, create_target_and_jammed_signals, trim_audio
 from DDPG import DDPGAgent
 
 

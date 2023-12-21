@@ -6,7 +6,6 @@ from scipy.fft import fft, rfft, irfft, fftshift, fftfreq
 from scipy.signal import convolve, freqz
 import matplotlib.pyplot as plt
 
-# ================================================ STAGE 1 ================================================
 
 def to_min_size_int_array(arr):
     """
@@ -206,9 +205,6 @@ def create_target_and_jammed_signals(audio_name, truncation_freq, interference_c
         wavfile.write(jammed_dst_file, rate=sampling_rate, data=jammed_signal)
 
     return target_signal, jammed_signal
-        
-
-# ================================================ STAGE 2 ================================================
 
 def LPF(N: int, cut_off_freq: int|float, sampling_freq: int|float = 1):
     """

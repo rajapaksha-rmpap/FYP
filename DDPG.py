@@ -164,7 +164,6 @@ class ActorNetwork(keras.Model):
         hidden2_initializer = RandomUniform(minval=-1/np.sqrt(self.fc2_dims), maxval=1/np.sqrt(self.fc2_dims))
         final_layer_initializer = RandomUniform(minval=-3*10**-4, maxval=3*10**-4)
         
-
         # define network layers including layer noramlizations
         self.state_normalizer   = LayerNormalization(epsilon=10**-4, center=False, scale=False)
         self.hidden1 = Dense(
@@ -185,15 +184,11 @@ class ActorNetwork(keras.Model):
         self.hidden2_normalizer = LayerNormalization(epsilon=10**-4, center=False, scale=False)
         self.mu = Dense(
             units=n_actions,
-            activation='tanh', # limit the action in the range [-1, 1] -> 'tanh'
+            activation='sigmoid', # limit the action in the range [0, 1] -> 'sigmoid'
             kernel_initializer=final_layer_initializer,
             bias_initializer=final_layer_initializer,
             name='action'
         )
-
-        # self.hidden1 = Dense(self.fc1_dims,  activation='relu', name='actor_hidden1')
-        # self.hidden2 = Dense(self.fc2_dims,  activation='relu', name='actor_hidden2')
-        # self.mu  = Dense(self.n_actions, activation='tanh') # action is bounded by +/- 1
 
     def call(self, state):
         normalized_state   = self.state_normalizer(state)
@@ -272,19 +267,23 @@ class DDPGAgent:
     def remember(self, state, action, reward, new_state, done):
         self.memory.store_transition(state, action, reward, new_state, done)
 
-    def save_models(self):
+    def save_models(self, checkpoint_file_name, checkpoint_dir):
         print("..... saving models .....")
-        self.actor.save_weights(self.actor.checkpoint_file)
-        self.critic.save_weights(self.critic.checkpoint_file)
-        self.target_actor.save_weights(self.target_actor.checkpoint_file)
-        self.target_critic.save_weights(self.target_critic.checkpoint_file)
+        if not os.path.exists(checkpoint_dir):
+            raise Exception(f"the provided checkpoint directory doesn't exist: given '{checkpoint_dir}'")
+        self.actor.save_weights(checkpoint_dir + checkpoint_file_name + '_actor_ddpg.h5')
+        self.critic.save_weights(checkpoint_dir + checkpoint_file_name + '_critic_ddpg.h5')
+        self.target_actor.save_weights(checkpoint_dir + checkpoint_file_name + '_target_actor_ddpg.h5')
+        self.target_critic.save_weights(checkpoint_dir + checkpoint_file_name + '_target_critic_ddpg.h5')
 
-    def load_models(self):
+    def load_models(self, checkpoint_file_name, checkpoint_dir):
         print("..... loading models .....")
-        self.actor.load_weights(self.actor.checkpoint_file)
-        self.critic.load_weights(self.critic.checkpoint_file)
-        self.target_actor.load_weights(self.target_actor.checkpoint_file)
-        self.target_critic.load_weights(self.target_critic.checkpoint_file)
+        if not os.path.exists(checkpoint_dir):
+            raise Exception(f"the provided checkpoint directory doesn't exist: given '{checkpoint_dir}'")
+        self.actor.load_weights(checkpoint_dir + checkpoint_file_name + '_actor_ddpg.h5')
+        self.critic.load_weights(checkpoint_dir + checkpoint_file_name + '_critic_ddpg.h5')
+        self.target_actor.load_weights(checkpoint_dir + checkpoint_file_name + '_target_actor_ddpg.h5')
+        self.target_critic.load_weights(checkpoint_dir + checkpoint_file_name + '_target_critic_ddpg.h5')
 
     def choose_action(self, observation, evaluate=False):
         state = tf.convert_to_tensor([observation], dtype=tf.float32) # introducing the batch dimension
@@ -295,7 +294,7 @@ class DDPGAgent:
             # here, the exploration noise is sampled from a normal distribution with zero mean and specified std deviation. 
             action += tf.random.normal(shape=[self.n_actions], mean=0.0, stddev=self.noise)
             # when added the noise, the action can go beyond the action space limits; so, clip the actions.
-            # action = tf.clip_by_value(action, clip_value_max=1.0, clip_value_min=-1.0)
+            action = tf.clip_by_value(action, clip_value_max=1.0, clip_value_min=-1.0)
 
         return action[0] # get rid of the batch dimension
     
@@ -324,7 +323,7 @@ class DDPGAgent:
         # update the actor
         with tf.GradientTape() as tape:
             new_policy_actions = self.actor(states)
-            critic_values_ = -self.critic(states, new_policy_actions) # why - ? gradient ascent
+            critic_values_ = -self.critic(states, new_policy_actions) # why (-) ? gradient ascent
             actor_loss = tf.math.reduce_mean(critic_values_)
 
         actor_network_gradients = tape.gradient(actor_loss, self.actor.trainable_variables)
